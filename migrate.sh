@@ -49,7 +49,7 @@ echo
 
 # ---------- Step 4: Download new version ----------
 echo -e "${BLUE}→ Downloading Jexactyl v4...${RESET}"
-curl -L -o panel.tar.gz https://github.com/Jexactyl/Jexactyl/releases/download/v4.0.0-beta7/panel.tar.gz
+curl -L -o panel.tar.gz https://github.com/Jexactyl/Jexactyl/releases/download/v4.0.0-rc1/panel.tar.gz
 tar -xzf panel.tar.gz
 rm panel.tar.gz
 chmod -R 755 storage/* bootstrap/cache
