@@ -9,36 +9,132 @@ BLUE="\e[36m"
 BOLD="\e[1m"
 RESET="\e[0m"
 
+# ---------- Default values ----------
+DIR="/var/www/jexactyl"
+DB_NAME="panel"
+DB_USER=""
+DB_PASS=""
+DB_HOST="localhost"
+SKIP_BACKUP=false
+AUTO_CONFIRM=false
+
+# ---------- Usage function ----------
+usage() {
+    echo -e "${BOLD}Usage:${RESET} $0 [OPTIONS]"
+    echo
+    echo -e "${BOLD}Options:${RESET}"
+    echo "  -d, --dir DIR          Working directory (default: /var/www/jexactyl)"
+    echo "  -n, --dbname NAME      Database name (default: panel)"
+    echo "  -u, --dbuser USER      Database username"
+    echo "  -p, --dbpass PASS      Database password"
+    echo "  -h, --dbhost HOST      Database host (default: localhost)"
+    echo "  -s, --skip-backup      Skip backup creation"
+    echo "  -y, --yes              Auto-confirm all prompts"
+    echo "  --help                 Show this help message"
+    echo
+    echo -e "${BOLD}Examples:${RESET}"
+    echo "  $0 --dbname jexuser --dbpass 123"
+    echo "  $0 -d /var/www/pterodactyl -n panel -u root -p password123"
+    echo "  $0 --skip-backup --yes"
+    exit 1
+}
+
+# ---------- Parse arguments ----------
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -d|--dir)
+            DIR="$2"
+            shift 2
+            ;;
+        -n|--dbname)
+            DB_NAME="$2"
+            shift 2
+            ;;
+        -u|--dbuser)
+            DB_USER="$2"
+            shift 2
+            ;;
+        -p|--dbpass)
+            DB_PASS="$2"
+            shift 2
+            ;;
+        -h|--dbhost)
+            DB_HOST="$2"
+            shift 2
+            ;;
+        -s|--skip-backup)
+            SKIP_BACKUP=true
+            shift
+            ;;
+        -y|--yes)
+            AUTO_CONFIRM=true
+            shift
+            ;;
+        --help)
+            usage
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${RESET}"
+            usage
+            ;;
+    esac
+done
+
 # ---------- Header ----------
 echo -e "${BOLD}${BLUE}=== Jexactyl v3 → Jexpanel v4 Migration Script ===${RESET}"
 echo
 
-# ---------- Step 1: Choose directory ----------
-echo -e "${BOLD}Choose the working directory:${RESET}"
-echo "1) /var/www/jexactyl"
-echo "2) /var/www/pterodactyl"
-read -rp "> " choice
-
-if [[ "$choice" == "2" ]]; then
-  dir="/var/www/pterodactyl"
-else
-  dir="/var/www/jexactyl"
+# ---------- Validate database credentials ----------
+if [[ -z "$DB_USER" ]]; then
+    read -rp "Database username: " DB_USER
 fi
 
-echo -e "${BLUE}→ Working directory set to:${RESET} $dir"
+if [[ -z "$DB_PASS" ]]; then
+    read -rsp "Database password: " DB_PASS
+    echo
+fi
+
+# ---------- Test database connection ----------
+echo -e "${BLUE}→ Testing database connection...${RESET}"
+if ! mysql -u "$DB_USER" -p"$DB_PASS" -h "$DB_HOST" -e "USE $DB_NAME" &>/dev/null; then
+    echo -e "${RED}✗ Database connection failed!${RESET}"
+    exit 1
+fi
+echo -e "${GREEN}✔ Database connection successful.${RESET}"
 echo
 
-cd "$dir"
+# ---------- Step 1: Choose directory ----------
+if [[ "$AUTO_CONFIRM" == false ]]; then
+    echo -e "${BOLD}Choose the working directory:${RESET}"
+    echo "1) /var/www/jexactyl"
+    echo "2) /var/www/pterodactyl"
+    echo "3) Custom: $DIR"
+    read -rp "> " choice
+
+    if [[ "$choice" == "2" ]]; then
+        DIR="/var/www/pterodactyl"
+    elif [[ "$choice" == "1" ]]; then
+        DIR="/var/www/jexactyl"
+    fi
+fi
+
+echo -e "${BLUE}→ Working directory set to:${RESET} $DIR"
+echo
+
+cd "$DIR"
 
 # ---------- Step 2: Backup ----------
-read -rp "Do you want to create a backup of database and files? (y/n): " backup
-if [[ "$backup" =~ ^[Yy]$ ]]; then
-  echo -e "${BLUE}→ Creating backup...${RESET}"
-  cp -R "$dir" "${dir}-backup"
-  mysqldump panel > "${dir}/backup.sql"
-  echo -e "${GREEN}✔ Backup created at ${dir}-backup and ${dir}/backup.sql${RESET}"
+if [[ "$SKIP_BACKUP" == false ]]; then
+    if [[ "$AUTO_CONFIRM" == true ]] || { read -rp "Do you want to create a backup? (y/n): " backup && [[ "$backup" =~ ^[Yy]$ ]]; }; then
+        echo -e "${BLUE}→ Creating backup...${RESET}"
+        cp -R "$DIR" "${DIR}-backup"
+        mysqldump -u "$DB_USER" -p"$DB_PASS" -h "$DB_HOST" "$DB_NAME" > "${DIR}/backup.sql"
+        echo -e "${GREEN}✔ Backup created at ${DIR}-backup and ${DIR}/backup.sql${RESET}"
+    else
+        echo -e "${YELLOW}⚠ Backup skipped.${RESET}"
+    fi
 else
-  echo -e "${YELLOW}⚠ Backup skipped. (Not recommended)${RESET}"
+    echo -e "${YELLOW}⚠ Backup skipped (--skip-backup).${RESET}"
 fi
 echo
 
@@ -73,8 +169,7 @@ echo
 
 # ---------- Step 7: Database cleanup ----------
 echo -e "${BLUE}→ Updating database schema...${RESET}"
-mysql -u root -p <<EOF
-USE panel;
+mysql -u "$DB_USER" -p"$DB_PASS" -h "$DB_HOST" "$DB_NAME" <<EOF
 DROP TABLE IF EXISTS tickets;
 DROP TABLE IF EXISTS ticket_messages;
 DROP TABLE IF EXISTS theme;
@@ -93,11 +188,11 @@ echo
 echo -e "${BLUE}→ Setting correct permissions...${RESET}"
 
 if id "nginx" &>/dev/null; then
-  chown -R nginx:nginx "$dir"/*
+    chown -R nginx:nginx "$DIR"/*
 elif id "apache" &>/dev/null; then
-  chown -R apache:apache "$dir"/*
+    chown -R apache:apache "$DIR"/*
 else
-  chown -R www-data:www-data "$dir"/*
+    chown -R www-data:www-data "$DIR"/*
 fi
 
 echo -e "${GREEN}✔ Permissions updated.${RESET}"
